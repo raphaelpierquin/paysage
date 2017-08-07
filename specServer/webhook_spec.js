@@ -9,16 +9,16 @@ describe("The webhook",function(){
     state.knowsCommit.and.returnValue(false);
     ingoing = jasmine.createSpyObj("ingoing", ["fileAddedOrModified","fileRemoved"]);
     webhook = require('../persistence/webhook')(ingoing, state);
-    payload = JSON.parse(JSON.stringify({
+    payload = {
       ref: "refs/heads/master",
       commits: [{
-        "added": ["addedFile"],
-        "removed": [ "removedFile"],
-        "modified": ["modifiedFile" ],
-        "not_used": "like many things in real payload"
+        added: ["addedFile"],
+        removed: [ "removedFile"],
+        modified: ["modifiedFile" ],
+        not_used: "like many things in real payload"
       }],
       head_commit: { id: "sha123" },
-    }));
+    };
   });
 
   it("informs about altered files", function(){

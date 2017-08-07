@@ -1,159 +1,162 @@
-var world = require("./world")();
+var debug = require('debug')('app');
 
-var persister = require('./persistence')(world)
-var persisted = persister.maybeStart();
-if (persisted) console.log("Pesistence on github is enabled.");
+module.exports = function(adapter) {
+  var world = require("./world")();
 
-var express = require('express');
-var path = require('path');
-var logger = require('morgan');
-var cookieParser = require('cookie-parser');
-var bodyParser = require('body-parser');
-var exphbs = require('express-handlebars');
+  var persister = require('./persistence')(world,adapter)
+  var persisted = persister.maybeStart();
+  if (persisted) debug("Pesistence on github is enabled.");
 
-var app = express();
+  var express = require('express');
+  var path = require('path');
+  var logger = require('morgan');
+  var cookieParser = require('cookie-parser');
+  var bodyParser = require('body-parser');
+  var exphbs = require('express-handlebars');
 
-// view engine setup
-app.set('views', path.join(__dirname, 'views'));
-app.engine('hbs', exphbs({
-  extname: '.hbs',
-  partialsDir: path.join(__dirname, 'views/partials'),
-  helpers: {
-    socketioClient: function() {
-      if(process.env.NODE_ENV == 'production') {
-        return 'https://cdnjs.cloudflare.com/ajax/libs/socket.io/' + require('socket.io/package').version + '/socket.io.js';
-      } else {
-        return '/socket.io/socket.io.js';
-      }
-    },
-  },
-}));
-app.set('view engine', 'hbs');
+  var app = express();
 
-app.use(logger('dev'));
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({extended: true}));
-app.use(cookieParser());
-app.use(require('less-middleware')(path.join(__dirname, 'public')));
-app.use(express.static(path.join(__dirname, 'public')));
-
-app.locals.reference_url = process.env.REFERENCE_URL || "http://processingjs.org/reference/";
-
-// routes setup 
-var list = require('./routes/list')(world);
-var playground = require('./routes/playground');
-var create = require('./routes/create');
-var workshop = require('./routes/workshop');
-if (persisted) {
-  var webhook = persister.router();
-  app.use('/webhook', webhook);
-}
-
-app.use('/', create);
-app.use('/playground/', playground);
-app.use('/list', list);
-app.use('/workshop', workshop);
-
-var server = require('http').createServer(app);
-var io = require('socket.io')(server);
-
-var getCode = function (playground, objectId) {
-    return world.playground(playground).creature(objectId).code();
-};
-
-function toData(creature) {
-  return { playgroundId: creature.playground.name,
-           objectId: creature.name,
-           code: creature.code() };
-}
-
-function fromData(data) {
-  return world
-         .playground(data.playgroundId)
-         .creature(data.objectId);
-}
-var getListOfAllCreatures = function (playground) {
-    return {playgroundId : playground.name,
-            objectIds : playground.population() }
-};
-
-io.on('connection', function(client) {
-
-client.on('programmer up',
-    function sendProgrammerTheObjectsList(playgroundName) {
-        console.log("a new programmer is up for " + playgroundName);
-        var playground = world.playground(playgroundName);
-        client.join(playground.name); // have client join the room named after Playground Id
-        if (! playground.isEmpty()) {
-          client.emit('objects list',
-                      getListOfAllCreatures(playground));
+  // view engine setup
+  app.set('views', path.join(__dirname, 'views'));
+  app.engine('hbs', exphbs({
+    extname: '.hbs',
+    partialsDir: path.join(__dirname, 'views/partials'),
+    helpers: {
+      socketioClient: function() {
+        if(process.env.NODE_ENV == 'production') {
+          return 'https://cdnjs.cloudflare.com/ajax/libs/socket.io/' + require('socket.io/package').version + '/socket.io.js';
+        } else {
+          return '/socket.io/socket.io.js';
         }
-    });
+      },
+    },
+  }));
+  app.set('view engine', 'hbs');
 
-client.on('playground up',
-    function sendPlaygroundAllCodeObjects (playgroundName) {
-        console.log(playgroundName + " playground: a new renderer page is up");
-        client.join(playgroundName);
-        var playground = world.playground(playgroundName);
-        if (playground.isEmpty()) return
-        var creatures = {};
-        playground.population().forEach(function(name) {
-          creatures[name] = { code: playground.creature(name).code()};
-        });
-        client.emit('playground full update', creatures);
-    });
+  if (process.env['_'].indexOf('jasmine')<0) app.use(logger('dev'));
+  app.use(bodyParser.json());
+  app.use(bodyParser.urlencoded({extended: true}));
+  app.use(cookieParser());
+  app.use(require('less-middleware')(path.join(__dirname, 'public')));
+  app.use(express.static(path.join(__dirname, 'public')));
 
-client.on('delete code',
-    function deleteCodeThenList(data) {
-        var creature = fromData(data);
-        creature.delete();
-        client.join(creature.playground.name); // we join the room to broadcast
-        client.broadcast.to(creature.playground.name).emit('code delete', data);
-        io.to(creature.playground.name).emit('objects list', getListOfAllCreatures(creature.playground));
-    });
+  app.locals.reference_url = process.env.REFERENCE_URL || "http://processingjs.org/reference/";
 
+  // routes setup 
+  var list = require('./routes/list')(world);
+  var playground = require('./routes/playground');
+  var create = require('./routes/create');
+  var workshop = require('./routes/workshop');
+  if (persisted) {
+    var webhook = persister.router();
+    app.use('/webhook', webhook);
+  }
 
-persister.onCreatureRemove(function(playgroundName, creatureName){
-  var data = {
-    playgroundId: playgroundName,
-    objectId: creatureName
+  app.use('/', create);
+  app.use('/playground/', playground);
+  app.use('/list', list);
+  app.use('/workshop', workshop);
+
+  var server = require('http').createServer(app);
+  var io = require('socket.io')(server);
+
+  var getCode = function (playground, objectId) {
+      return world.playground(playground).creature(objectId).code();
   };
-  client.join(playgroundName); // we join the room to broadcast
-  io.to(playgroundName).emit('code delete', data);
-  io.to(playgroundName).emit('objects list', getListOfAllCreatures(world.playground(playgroundName)));
-});
+
+  function toData(creature) {
+    return { playgroundId: creature.playground.name,
+             objectId: creature.name,
+             code: creature.code() };
+  }
+
+  function fromData(data) {
+    return world
+           .playground(data.playgroundId)
+           .creature(data.objectId);
+  }
+  var getListOfAllCreatures = function (playground) {
+      return {playgroundId : playground.name,
+              objectIds : playground.population() }
+  };
+
+  io.on('connection', function(client) {
+
+  client.on('programmer up',
+      function sendProgrammerTheObjectsList(playgroundName) {
+          console.log("a new programmer is up for " + playgroundName);
+          var playground = world.playground(playgroundName);
+          client.join(playground.name); // have client join the room named after Playground Id
+          if (! playground.isEmpty()) {
+            client.emit('objects list',
+                        getListOfAllCreatures(playground));
+          }
+      });
+
+  client.on('playground up',
+      function sendPlaygroundAllCodeObjects (playgroundName) {
+          console.log(playgroundName + " playground: a new renderer page is up");
+          client.join(playgroundName);
+          var playground = world.playground(playgroundName);
+          if (playground.isEmpty()) return
+          var creatures = {};
+          playground.population().forEach(function(name) {
+            creatures[name] = { code: playground.creature(name).code()};
+          });
+          client.emit('playground full update', creatures);
+      });
+
+  client.on('delete code',
+      function deleteCodeThenList(data) {
+          var creature = fromData(data);
+          creature.delete();
+          client.join(creature.playground.name); // we join the room to broadcast
+          client.broadcast.to(creature.playground.name).emit('code delete', data);
+          io.to(creature.playground.name).emit('objects list', getListOfAllCreatures(creature.playground));
+      });
 
 
-client.on('code update',
-    function saveNewCodeThenBroadcastCodeAndList(data) {
-        var creature = fromData(data);
-        console.log(creature.name + " for " + creature.playground.name + " from " + client.id);
-
-        creature.updateCode(data.code);
-
-        client.join(creature.playground.name); // we join the room to broadcast
-        client.broadcast.to(creature.playground.name).emit('code update', data);
-        io.to(creature.playground.name).emit('objects list', getListOfAllCreatures(creature.playground));
-    });
-
-persister.onCreatureCodeRefresh(function(creature){
-  console.log(creature.playground.name + '/' + creature.name);
-  io.to(creature.playground.name).emit('code update', toData(creature));
-  io.to(creature.playground.name).emit('objects list', getListOfAllCreatures(creature.playground));
+  persister.onCreatureRemove(function(playgroundName, creatureName){
+    var data = {
+      playgroundId: playgroundName,
+      objectId: creatureName
+    };
+    client.join(playgroundName); // we join the room to broadcast
+    io.to(playgroundName).emit('code delete', data);
+    io.to(playgroundName).emit('objects list', getListOfAllCreatures(world.playground(playgroundName)));
+  });
 
 
-})
+  client.on('code update',
+      function saveNewCodeThenBroadcastCodeAndList(data) {
+          var creature = fromData(data);
+          console.log(creature.name + " for " + creature.playground.name + " from " + client.id);
+
+          creature.updateCode(data.code);
+
+          client.join(creature.playground.name); // we join the room to broadcast
+          client.broadcast.to(creature.playground.name).emit('code update', data);
+          io.to(creature.playground.name).emit('objects list', getListOfAllCreatures(creature.playground));
+      });
+
+  persister.onCreatureCodeRefresh(function(creature){
+    console.log(creature.playground.name + '/' + creature.name);
+    io.to(creature.playground.name).emit('code update', toData(creature));
+    io.to(creature.playground.name).emit('objects list', getListOfAllCreatures(creature.playground));
 
 
-client.on('request code',
-    function sendProgrammerTheCodeObject(data) {
-        var creature = fromData(data);
+  })
 
-        console.log(creature.name + " for " + creature.playground.name + " programmer" ) ;
 
-        client.emit('source code', toData(creature));
-    });
+  client.on('request code',
+      function sendProgrammerTheCodeObject(data) {
+          var creature = fromData(data);
 
-});
+          console.log(creature.name + " for " + creature.playground.name + " programmer" ) ;
 
-module.exports = server;
+          client.emit('source code', toData(creature));
+      });
+
+  });
+  return server;
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 require('dotenv').config()
 var debug = require('debug')('paysage');
-var server = require('../app');
+var server = require('../app')();
 
 server.listen(process.env.PORT||3000, function(){
   console.log('Express server listening on port ' + server.address().port);
